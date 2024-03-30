@@ -88,6 +88,7 @@ Pybind11Helper {
     Pybind11Helper() : isNone(false), wrapper() {}
 
     bool init(pybind11::handle src) {
+        std::cout << "init\n";
         isNone = src.is_none();
         if (isNone) {
             return true;
@@ -154,6 +155,7 @@ Pybind11Helper {
     }
 
     ndarray::Array<T,N,C> convert() const {
+        std::cout << "convert\n";
         if (isNone) {
             return ndarray::Array<T,N,C>();
         }
@@ -197,6 +199,7 @@ Pybind11Helper {
         if (src.getManager()) {
             base = pybind11::reinterpret_steal<pybind11::object>(ndarray::makePyManager(src.getManager()));
         }
+
         Wrapper result(pShape, pStrides, src.getData(), base);
         if (std::is_const<Element>::value) {
             result.attr("flags")["WRITEABLE"] = false;
@@ -220,9 +223,9 @@ class type_caster< ndarray::Array<T,N,C> > {
     using Helper = ndarray::Pybind11Helper<T,N,C>;
 public:
 
-    bool load(handle src, bool) {
+   bool load(handle src, bool) {
         return _helper.init(src) && _helper.check();
-    }
+   }
 
     void set_value() {
         _value = _helper.convert();
@@ -238,7 +241,8 @@ public:
         return cast(*src, policy, parent);
     }
 
-    operator ndarray::Array<T,N,C> * () {
+    explicit operator ndarray::Array<T,N,C> * () {
+        std::cout << "operator1 \n";
         if (_helper.isNone) {
             return nullptr;
         } else {
@@ -247,7 +251,10 @@ public:
         }
     }
 
-    operator ndarray::Array<T,N,C> & () { set_value(); return _value; }
+    explicit operator ndarray::Array<T,N,C> & () {
+        std::cout << "operator2 \n";
+        set_value(); return _value;
+    }
 
     template <typename _T> using cast_op_type = pybind11::detail::cast_op_type<_T>;
 
