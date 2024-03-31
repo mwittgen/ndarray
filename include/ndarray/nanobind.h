@@ -43,150 +43,219 @@
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
-#include <nanobind/stl/pair.h>
-#include <nanobind/operators.h>
-
 #include "ndarray.h"
-#include "nanobind/stl/detail/nb_array.h"
-#include "nanobind/stl/detail/nb_list.h"
 #include "ndarray/eigen.h"
 #include "ndarray/Array.h"
-
-#include <pybind11/numpy.h>
 #include <iostream>
+
+#include <typeinfo>
 
 namespace nb = nanobind;
 namespace ndarray {
+namespace detail {
 
-    namespace detail {
-
-        inline void destroyCapsule(PyObject *p) {
-            void *m = PyCapsule_GetPointer(p, "ndarray.Manager");
-            Manager::Ptr *b = reinterpret_cast<Manager::Ptr *>(m);
-            delete b;
-        }
-
-    } // namespace ndarray::detail
-
-    inline PyObject *makePyManager(Manager::Ptr const &m) {
-        return PyCapsule_New(
-                new Manager::Ptr(m),
-                "ndarray.Manager",
-                detail::destroyCapsule
-        );
+    inline void destroyCapsule(PyObject *p) {
+        void *m = PyCapsule_GetPointer(p, "ndarray.Manager");
+        Manager::Ptr *b = reinterpret_cast<Manager::Ptr *>(m);
+        delete b;
     }
 
+} // namespace ndarray::detail
 
-    using nanobind_np_size_t = ssize_t;
+inline PyObject *makePyManager(Manager::Ptr const &m) {
+    return PyCapsule_New(
+            new Manager::Ptr(m),
+            "ndarray.Manager",
+            detail::destroyCapsule
+    );
+}
 
-    template<typename T, int N, int C>
-    struct
+template<typename T, int N, int C>
+struct
 #ifdef __GNUG__
 // pybind11 hides all symbols in its namespace only when this is set,
 // and in that case we should hide these classes too.
             __attribute__((visibility("hidden")))
 #endif
-    NanobindHelper {
-    };
+NanobindHelper {
+};
 
 } // namespace ndarray
-
-
 NAMESPACE_BEGIN(NB_NAMESPACE)
-    NAMESPACE_BEGIN(detail)
-        struct managed_dltensor {
-            dlpack::dltensor dltensor;
-            void *manager_ctx;
-            void (*deleter)(managed_dltensor *);
-        };
+NAMESPACE_BEGIN(detail)
+template<typename T, int N, int C>
+struct type_caster<::ndarray::Array<T,N,C>> {
+    using Wrapper = std::remove_const_t<nb::ndarray<nb::numpy, T>>;
+    using ArrayType = nb::ndarray<nb::numpy, typename std::remove_const_t<T>> ;
+    using Array = std::conditional_t<std::is_const_v<T>, const ArrayType, ArrayType>;
+    using Element =  typename std::remove_const_t<T>;
+    static constexpr bool isConst = std::is_const<Element>::value;
 
-        struct ndarray_handle {
-            managed_dltensor *ndarray;
-            std::atomic<size_t> refcount;
-            PyObject *owner, *self;
-            bool free_shape;
-            bool free_strides;
-            bool call_deleter;
-            bool ro;
-        };
-        template<typename T, int N, int C>
-        struct type_caster<::ndarray::Array<T,N,C>> {
-            using Value = ::ndarray::Array<T, N, C>;
-            static constexpr auto Name =
-                    const_name("ndarray")  + const_name("[") + concat_maybe(detail::ndarray_arg<T>::name) +
-                    const_name("]");
-            template<typename T_> using Cast = movable_cast_t<T_>;
-#if 0
-            static handle from_cpp(Value *p, rv_policy policy, cleanup_list *list) {
-                if (!p)return none().release();
-                return from_cpp(*p, policy, list);
-            }
-#endif
-            void set_value() {
-               //value = _helper.convert();
-            }
+    using Value = ::ndarray::Array<T,N,C>;
+    static constexpr auto Name = const_name("ndarray");
+    template<typename T_> using Cast = movable_cast_t<T_>;
 
-            explicit operator Value *() {
-              //  if (_helper.isNone) {
-             //       return nullptr;
-              //  } else {
-             //       set_value();
-              //      return &value;
-               // }
-               return 0;
-            }
+    static handle from_cpp(Value *p, rv_policy policy, cleanup_list *list) {
+        if (!p)return none().release();
+        return from_cpp(*p, policy, list);
+    }
 
-            explicit operator Value &() { return (Value &) value; }
+    bool init(nb::handle src, cleanup_list *cleanup) {
+        isNone = src.is_none();
+        if (isNone) {
+            return true;
+        }
 
-            explicit operator Value &&() { return (Value &&) value; }
+        size_t shape[N];
+        detail::ndarray_req req;
+        req.shape = shape;
+        int flags;
+        wrapper = Wrapper(ndarray_import(
+                src.ptr(), &req, flags & (uint8_t) cast_flags::convert, cleanup));
+        return wrapper.is_valid();
+    }
 
-            using Helper = ::ndarray::NanobindHelper<T, N, C>;
+    bool check() const {
+        if (isNone) {
+            return true;
+        }
 
-            bool from_python(nb::handle src, uint8_t flags, cleanup_list *cleanup) noexcept {
-                std::cout << "from_python" << std::endl;
-                using Wrapper = nb::ndarray<> ;
-                nb::object object;
-                bool isNone = src.is_none();
-                if (isNone) {
+        if (wrapper.ndim() != N) {
+            return false;
+        }
+
+        //if (!isConst && !wrapper.writeable()) {
+        //    return false;
+        //}
+
+        int64_t const * shape = wrapper.shape_ptr();
+        int64_t const * strides = wrapper.stride_ptr();
+        size_t const itemsize = wrapper.itemsize();
+        if (C > 0) {
+            // If the shape is zero in any dimension, we don't
+            // worry about the strides.
+            for (int i = 0; i < C; ++i) {
+                if (shape[N-i-1] == 0) {
                     return true;
                 }
-                try {
-                   object  = borrow(src);
-                } catch (...) {
+            }
+
+            int64_t requiredStride = 1;//itemsize;
+            for (int i = 0; i < C; ++i) {
+                if (strides[N-i-1] != requiredStride) {
                     return false;
                 }
-                print(object);
-                return true;//_helper.init(src) && _helper.check();
+                requiredStride *= shape[N-i-1];
             }
+        } else if (C < 0) {
+            // If the shape is zero in any dimension, we don't
+            // worry about the strides.
+            for (int i = 0; i < -C; ++i) {
+                if (shape[i] == 0) {
+                    return true;
+                }
+            }
+            size_t requiredStride = itemsize;
+            for (int i = 0; i < -C; ++i) {
+                if (strides[i] != requiredStride) {
+                    return false;
+                }
+                requiredStride *= shape[i];
+            }
+        }
+        return true;
+    }
 
-            static nb::handle from_cpp(const ::ndarray::Array<T, N, C> &src, rv_policy policy,
-                                   cleanup_list *cleanup) noexcept {
-                using ArrayType = nb::ndarray<nb::numpy, typename std::remove_const_t<T>> ;
-                using Array = std::conditional_t<std::is_const_v<T>, const ArrayType, ArrayType>;
-                using Element =  typename std::remove_const_t<T>;
-                ::ndarray::Vector<::ndarray::Size,N> nShape = src.getShape();
-                ::ndarray::Vector<::ndarray::Offset,N> nStrides = src.getStrides();
-                std::vector<size_t> pShape(N);
-                std::vector<int64_t> pStrides(N);
-                for (int i = 0; i < N; ++i) {
-                    pShape[i] = nShape[i];
-                    pStrides[i] = nStrides[i] ;
-                }
-                nb::object base = nb::object();
-                if (src.getManager()) {
-                    base = nb::steal<nb::object>(::ndarray::makePyManager(src.getManager()));
-                }
-               Array array((Element*)src.getData(), N, pShape.data(), base, pStrides.data());
-                if (std::is_const_v<T>) {
-                   //base.attr("flags")["WRITEABLE"] = false;
-                }
-              nb::handle result = ndarray_wrap(array.handle(),  int(nanobind::detail::ndarray_framework::numpy),policy, cleanup);
-              return result;
-            }
-        private:
-            ::ndarray::Array<T, N, C> value;
-        };
-    NAMESPACE_END(detail);
+    Value convert() const {
+        if (isNone) {
+            return Value();
+        }
+
+        //if (!wrapper.dtype().attr("isnative")) {
+        //    throw nb::type_error("Only arrays with native byteorder can be converted to C++.");
+        //}
+
+        ::ndarray::Vector<::ndarray::Size,N> nShape;
+        ::ndarray::Vector<::ndarray::Offset,N> nStrides;
+        int64_t const * pShape = wrapper.shape_ptr();
+        int64_t const * pStrides = wrapper.stride_ptr();
+        size_t itemsize = wrapper.itemsize();
+        for (int i = 0; i < N; ++i) {
+            //if (pStrides[i] % itemsize != 0) {
+            //    PyErr_SetString(
+            //            PyExc_TypeError,
+             //           "Cannot convert array to C++: strides must be an integer multiple of the element size"
+             //   );
+            //    throw pybind11::error_already_set();
+            //}
+            nShape[i] = pShape[i];
+            nStrides[i] = pStrides[i];
+        }
+
+        return Value (
+                ::ndarray::external(const_cast<Element*>(wrapper.data()),
+                                  nShape, nStrides, wrapper)
+        );
+    }
+
+    void set_value() {
+        value = convert();
+    }
+
+    explicit operator Value * () {
+        if (isNone) {
+            return nullptr;
+        } else {
+            set_value();
+            return &value;
+        }
+    }
+
+    explicit operator Value &() {
+        set_value();
+        return (Value &) value;
+    }
+
+    explicit operator Value &&() {
+        set_value();
+        return (Value &&) value;
+    }
+
+
+    bool from_python(nb::handle src, uint8_t flags, cleanup_list *cleanup) noexcept {
+        bool result = init(src, cleanup) && check();
+        return result;
+    }
+    static nb::handle from_cpp(const ::ndarray::Array<T, N, C> &src, rv_policy policy,
+                               cleanup_list *cleanup) noexcept {
+        using ArrayType = nb::ndarray<nb::numpy, typename std::remove_const_t<T>> ;
+        using Array = std::conditional_t<std::is_const_v<T>, const ArrayType, ArrayType>;
+        using Element =  typename std::remove_const_t<T>;
+        ::ndarray::Vector<::ndarray::Size,N> nShape = src.getShape();
+        ::ndarray::Vector<::ndarray::Offset,N> nStrides = src.getStrides();
+        std::vector<size_t> pShape(N);
+        std::vector<int64_t> pStrides(N);
+        for (int i = 0; i < N; ++i) {
+            pShape[i] = nShape[i];
+            pStrides[i] = nStrides[i] ;
+        }
+        nb::object base = nb::object();
+        if (src.getManager()) {
+            base = nb::steal<nb::object>(::ndarray::makePyManager(src.getManager()));
+        }
+        Array array((Element*)src.getData(), N, pShape.data(), base, pStrides.data());
+
+        nb::handle result = ndarray_wrap(array.handle(),  int(nanobind::detail::ndarray_framework::numpy),policy, cleanup);
+        if (std::is_const_v<T>) {
+            result.attr("flags")["WRITEABLE"] = false;
+        }
+        return result;
+    }
+private:
+    bool isNone = false;
+    Value value;
+    Wrapper wrapper = Wrapper();
+};
+NAMESPACE_END(detail);
 NAMESPACE_END(NB_NAMESPACE);
-
 #endif

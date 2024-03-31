@@ -88,6 +88,7 @@ Pybind11Helper {
     Pybind11Helper() : isNone(false), wrapper() {}
 
     bool init(pybind11::handle src) {
+        std::cout << "init\n";
         isNone = src.is_none();
         if (isNone) {
             return true;
@@ -154,6 +155,7 @@ Pybind11Helper {
     }
 
     ndarray::Array<T,N,C> convert() const {
+        std::cout << "convert\n";
         if (isNone) {
             return ndarray::Array<T,N,C>();
         }
@@ -240,6 +242,7 @@ public:
     }
 
     explicit operator ndarray::Array<T,N,C> * () {
+        std::cout << "operator1 \n";
         if (_helper.isNone) {
             return nullptr;
         } else {
@@ -248,7 +251,10 @@ public:
         }
     }
 
-    explicit operator ndarray::Array<T,N,C> & () { set_value(); return _value; }
+    explicit operator ndarray::Array<T,N,C> & () {
+        std::cout << "operator2 \n";
+        set_value(); return _value;
+    }
 
     template <typename _T> using cast_op_type = pybind11::detail::cast_op_type<_T>;
 
