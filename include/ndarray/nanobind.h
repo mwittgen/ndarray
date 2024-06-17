@@ -123,6 +123,25 @@ struct type_caster<::ndarray::Array<T,N,C>> {
         if (wrapper.ndim() != N) {
             return false;
         }
+        if(wrapper.dtype().bits != sizeof(Element) * 8) {
+            return false;
+        }/nvme0n1/wittgen/lsst/nanobind/lsstsw/miniconda/envs/lsst-scipipe-8.0.0/include/ndarray/nanobind.h
+        switch(dlpack::dtype_code(wrapper.dtype().code)) {
+            case dlpack::dtype_code::Float:
+                if(!std::is_floating_point_v<Element>) return false;
+                break;
+            case dlpack::dtype_code::Int:
+                if(!(std::is_signed_v<Element> && std::is_integral_v<Element>)) return false;
+                break;
+            case dlpack::dtype_code::UInt:
+                if(!(std::is_unsigned_v<Element> && std::is_integral_v<Element>)) return false;
+                break;
+            case dlpack::dtype_code::Bool:
+                if(!std::is_same_v<Element, bool>) return false;
+                break;
+            default:
+                return false;
+        }
 
         //if (!isConst && !wrapper.writeable()) {
         //    return false;
@@ -181,16 +200,11 @@ struct type_caster<::ndarray::Array<T,N,C>> {
         int64_t const * pStrides = wrapper.stride_ptr();
         size_t itemsize = wrapper.itemsize();
         for (int i = 0; i < N; ++i) {
-            //if (pStrides[i] % itemsize != 0) {
-            //    PyErr_SetString(
-            //            PyExc_TypeError,
-             //           "Cannot convert array to C++: strides must be an integer multiple of the element size"
-             //   );
-            //    throw pybind11::error_already_set();
-            //}
             nShape[i] = pShape[i];
             nStrides[i] = pStrides[i];
         }
+
+        auto *p = const_cast<Element*>(wrapper.data());
 
         return Value (
                 ::ndarray::external(const_cast<Element*>(wrapper.data()),
@@ -237,7 +251,7 @@ struct type_caster<::ndarray::Array<T,N,C>> {
         std::vector<int64_t> pStrides(N);
         for (int i = 0; i < N; ++i) {
             pShape[i] = nShape[i];
-            pStrides[i] = nStrides[i] ;
+            pStrides[i] = nStrides[i];
         }
         nb::object base = nb::object();
         if (src.getManager()) {
@@ -245,7 +259,7 @@ struct type_caster<::ndarray::Array<T,N,C>> {
         }
         Array array((Element*)src.getData(), N, pShape.data(), base, pStrides.data());
 
-        nb::handle result = ndarray_wrap(array.handle(),  int(nanobind::detail::ndarray_framework::numpy),policy, cleanup);
+        nb::handle result = ndarray_wrap(array.handle(),  nanobind::detail::ndarray_framework::numpy,policy, cleanup);
         if (std::is_const_v<T>) {
             result.attr("flags")["WRITEABLE"] = false;
         }
