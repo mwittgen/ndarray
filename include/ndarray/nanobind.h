@@ -46,7 +46,6 @@
 #include "ndarray.h"
 #include "ndarray/eigen.h"
 #include "ndarray/Array.h"
-#include <iostream>
 
 #include <typeinfo>
 
@@ -106,12 +105,11 @@ struct type_caster<::ndarray::Array<T,N,C>> {
             return true;
         }
 
-        size_t shape[N];
-        detail::ndarray_req req;
-        req.shape = shape;
-        int flags;
+        int64_t shape[N];
+        ndarray_config config;
+        config.shape = shape;
         wrapper = Wrapper(ndarray_import(
-                src.ptr(), &req, flags & (uint8_t) cast_flags::convert, cleanup));
+                src.ptr(), &config, true, cleanup));
         return wrapper.is_valid();
     }
 
@@ -125,7 +123,7 @@ struct type_caster<::ndarray::Array<T,N,C>> {
         }
         if(wrapper.dtype().bits != sizeof(Element) * 8) {
             return false;
-        }/nvme0n1/wittgen/lsst/nanobind/lsstsw/miniconda/envs/lsst-scipipe-8.0.0/include/ndarray/nanobind.h
+        }
         switch(dlpack::dtype_code(wrapper.dtype().code)) {
             case dlpack::dtype_code::Float:
                 if(!std::is_floating_point_v<Element>) return false;
@@ -259,7 +257,7 @@ struct type_caster<::ndarray::Array<T,N,C>> {
         }
         Array array((Element*)src.getData(), N, pShape.data(), base, pStrides.data());
 
-        nb::handle result = ndarray_wrap(array.handle(),  nanobind::detail::ndarray_framework::numpy,policy, cleanup);
+        nb::handle result = ndarray_export(array.handle(), nb::numpy::value, policy, cleanup);
         if (std::is_const_v<T>) {
             result.attr("flags")["WRITEABLE"] = false;
         }
